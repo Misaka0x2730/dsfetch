@@ -24,16 +24,18 @@
 
 DSFetch runs on the console's stock firmware.
 
-1. Unzip the release archive into the root of a memory card (usually TF2,
-   the games card).  
+1. Download `DSFetch-rgdsplus-<version>.zip` from the *Assets* of the latest
+   release on the [Releases](https://github.com/Misaka0x2730/dsfetch/releases)
+   page.
+2. Unzip it into the root of a memory card (usually TF2, the games card).  
    On macOS use Terminal, since double-clicking the archive
    puts everything into an extra folder (`NO NAME` is the card's name):
    ```sh
-   unzip -o ~/Downloads/DSFetch-rgdsplus-v1.0.0.zip -d "/Volumes/NO NAME"
+   unzip -o ~/Downloads/DSFetch-rgdsplus-v0.0.1.zip -d "/Volumes/NO NAME"
    diskutil eject "/Volumes/NO NAME"
    ```
-2. Turn on Wi-Fi in the console's settings.
-3. Start **DSFetch** from *Applications* or *Ports*.
+3. Turn on Wi-Fi in the console's settings.
+4. Start **DSFetch** from *Applications* or *Ports*.
 
 To update, unzip a newer release over the old one: servers and settings are
 kept.  
