@@ -8,15 +8,15 @@ require (
 	github.com/cloudsoda/go-smb2 v0.0.0-20260918041005-0c5d69b69701
 	github.com/fclairamb/ftpserverlib v0.32.4
 	github.com/jlaffaye/ftp v0.2.4
-	github.com/klauspost/compress v1.19.0
+	github.com/klauspost/compress v1.20.1
 	github.com/nwaples/rardecode/v2 v2.4.1
 	github.com/pkg/sftp v1.13.11
 	github.com/spf13/afero v1.15.0
-	github.com/ulikunitz/xz v0.5.15
+	github.com/ulikunitz/xz v0.5.17
 	github.com/veandco/go-sdl2 v0.4.40
-	go.uber.org/atomic v1.11.0
+	go.uber.org/atomic v1.12.0
 	golang.org/x/crypto v0.57.0
-	golang.org/x/image v0.34.0
+	golang.org/x/image v0.46.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/text v0.42.0
 )
