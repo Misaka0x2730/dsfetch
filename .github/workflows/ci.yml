@@ -1,0 +1,220 @@
+# Lint and tests on pushes to main/master and on pull requests, the console
+# package (dist/DSFetch-rgdsplus-<version>.zip) as a run artifact, and a GitHub release
+# with that zip for every pushed v* tag:
+#
+#   git tag v1.0.0 && git push origin v1.0.0
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    # -eo pipefail: a failing `go test | tee` fails the step.
+    shell: bash
+
+env:
+  # The console build uses GO_VERSION from docker/Dockerfile; keep the minor
+  # version in step.
+  GO_VERSION: '1.27.x'
+
+jobs:
+  test:
+    name: Lint and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            go.sum
+            third_party/gabagool/go.sum
+
+      # cgo headers for go-sdl2.
+      - name: Install SDL2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev libsdl2-gfx-dev
+
+      # For the external 7z engine tests: the official 7zz in the version the
+      # console package ships (Ubuntu's 7zip package has no 7zz). The checksum
+      # changes with SEVENZIP_VERSION in docker/Dockerfile.
+      - name: Install 7zz
+        env:
+          SEVENZIP_X64_SHA256: dc99eff5008f1ab79bd7084c68513701547a808a89502bf4133683535ab3c695
+        run: |
+          version=$(sed -n 's/^ARG SEVENZIP_VERSION=//p' docker/Dockerfile)
+          mkdir -p "$RUNNER_TEMP/7zz"
+          cd "$RUNNER_TEMP/7zz"
+          curl -fsSLO "https://www.7-zip.org/a/7z${version}-linux-x64.tar.xz"
+          echo "$SEVENZIP_X64_SHA256  7z${version}-linux-x64.tar.xz" | sha256sum -c -
+          tar -xJf "7z${version}-linux-x64.tar.xz" 7zz
+          echo "$RUNNER_TEMP/7zz" >> "$GITHUB_PATH"
+
+      - name: gofmt
+        run: |
+          files=$(gofmt -l .)
+          if [ -n "$files" ]; then
+            echo "::error::gofmt needed for:"
+            echo "$files"
+            exit 1
+          fi
+
+      - name: go mod tidy
+        run: |
+          go mod tidy -diff
+          (cd third_party/gabagool && go mod tidy -diff)
+
+      - name: go vet
+        run: go vet ./... github.com/BrandonKowalski/gabagool/v2/...
+
+      - name: Unit tests
+        run: go test -race ./... github.com/BrandonKowalski/gabagool/v2/...
+
+  integration:
+    name: Integration tests (vsftpd with and without TLS, Samba)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            go.sum
+            third_party/gabagool/go.sum
+
+      - name: Start test servers
+        run: |
+          mkdir -p dev/share
+          ./dev/ftps-cert.sh
+          docker compose -f dev/docker-compose.yml up -d --wait ftp ftps samba
+          # On start vsftpd chowns the shared folder to its own user and
+          # Samba makes it 0770; the tests also write into it from here.
+          sudo chmod 0777 dev/share
+
+      - name: Integration tests
+        run: go test -tags integration -count=1 -v ./internal/remote/... | tee integration.log
+
+      # The tests skip themselves when a server is unreachable; here that is
+      # a failure.
+      - name: Check for skipped tests
+        run: |
+          if grep -- '--- SKIP' integration.log; then
+            echo "::error::integration tests were skipped"
+            exit 1
+          fi
+
+      - name: Server logs
+        if: failure()
+        run: docker compose -f dev/docker-compose.yml logs ftp ftps samba
+
+  package:
+    name: Package (linux/arm64)
+    # Native arm64 runners are free for public repositories. Without them
+    # (private repository), set the repository variable
+    # PACKAGE_RUNNER=ubuntu-latest: the build then runs under QEMU, much slower.
+    runs-on: ${{ vars.PACKAGE_RUNNER || 'ubuntu-24.04-arm' }}
+    timeout-minutes: 60
+    outputs:
+      artifact: ${{ steps.version.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Tags for `git describe`: the version shown in Settings → About.
+          fetch-depth: 0
+
+      # scripts/collect-licenses.sh runs `go list` on the host.
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            go.sum
+            third_party/gabagool/go.sum
+
+      - uses: go-task/setup-task@v2
+
+      - uses: docker/setup-qemu-action@v4
+        if: runner.arch != 'ARM64'
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Version
+        id: version
+        run: |
+          version=$(git describe --tags --always --dirty)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "artifact=DSFetch-rgdsplus-$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build and package
+        run: task package
+
+      - name: Summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          {
+            echo "### DSFetch $VERSION"
+            echo
+            echo "- build image: $(cat build/arm64/BUILD_GLIBC)"
+            echo "- binary needs: $(cat build/arm64/REQUIRED_GLIBC)"
+            echo "- 7zz: $(cat build/arm64/7zz/VERSION)"
+            echo "- zip: $(du -h dist/DSFetch-rgdsplus-*.zip | cut -f1)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The zip and the LGPL source of the 7zz inside it.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.version.outputs.artifact }}
+          path: |
+            dist/DSFetch-rgdsplus-*.zip
+            dist/7z*-src.tar.xz
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, integration, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      # Unpacks the artifact wrapper, leaving dist/DSFetch-rgdsplus-<version>.zip
+      # and dist/7z<version>-src.tar.xz.
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.package.outputs.artifact }}
+          path: dist
+
+      # The asset name carries the version (DSFetch-rgdsplus-v1.2.0.zip); the
+      # 7-Zip source is attached because the zip ships 7zz (LGPL). Tags with
+      # a suffix (v1.1.0-rc1) become pre-releases.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          flags=(--verify-tag --generate-notes --title "DSFetch $TAG")
+          if [[ "$TAG" == *-* ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$TAG" dist/DSFetch-rgdsplus-*.zip dist/7z*-src.tar.xz "${flags[@]}"

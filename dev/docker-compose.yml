@@ -1,0 +1,85 @@
+# Test servers for development (all images have arm64 builds, so they run
+# natively on Apple Silicon). Every server exposes ./share (dev/share).
+#
+#   task dev:servers          # start them all
+#   task test:integration     # FTP, FTPS and SMB tests against them
+#
+# From the console, use the Mac's LAN IP with these ports:
+#   FTP  2121  user test / test   (passive ports 21000-21010)
+#   FTPS 2122  user test / test   (explicit TLS, passive ports 21011-21020;
+#                                  certificate from dev/ftps-cert.sh)
+#   SFTP 2222  user test / test   (files under /share)
+#   SMB  4445  user test / test   (share "Data"; 445 is taken by macOS File Sharing)
+#
+# Images are pinned by digest (CI's integration tests use them);
+# Dependabot (.github/dependabot.yml) proposes updates.
+name: dsfetch-dev
+
+services:
+  ftp:
+    image: delfer/alpine-ftp-server:latest@sha256:60bb774d8408d9d4d5c74d05d1c086a34ce192c6c1a142ffac268cac0dbc6fac
+    environment:
+      USERS: "test|test|/ftp/test"
+      MIN_PORT: "21000"
+      MAX_PORT: "21010"
+    ports:
+      - "2121:21"
+      - "21000-21010:21000-21010"
+    volumes:
+      - ./share:/ftp/test
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 21 || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # The same vsftpd with explicit TLS. Like vsftpd's defaults it requires
+  # the data connections to resume the control connection's TLS session.
+  ftps:
+    image: delfer/alpine-ftp-server:latest@sha256:60bb774d8408d9d4d5c74d05d1c086a34ce192c6c1a142ffac268cac0dbc6fac
+    environment:
+      USERS: "test|test|/ftp/test"
+      MIN_PORT: "21011"
+      MAX_PORT: "21020"
+      TLS_CERT: /tls/cert.pem
+      TLS_KEY: /tls/key.pem
+    ports:
+      - "2122:21"
+      - "21011-21020:21011-21020"
+    volumes:
+      - ./share:/ftp/test
+      - ./tls:/tls:ro
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 21 || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  sftp:
+    image: lscr.io/linuxserver/openssh-server:10.3_p1-r1-ls237@sha256:946fa26105e0ec212fdf821b9ddc59aab65f2c2d07c02b25ff0f5001fc332ff0
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      PASSWORD_ACCESS: "true"
+      USER_NAME: test
+      USER_PASSWORD: test
+    ports:
+      - "2222:2222"
+    volumes:
+      - ./share:/share
+
+  samba:
+    image: dockurr/samba:4.23.10@sha256:404f91bdf317d390241a41165579cd25199f34171b44677d877c75dc40184042
+    environment:
+      NAME: Data
+      USER: test
+      PASS: test
+    ports:
+      - "4445:445"
+    volumes:
+      - ./share:/storage
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 445 || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 30

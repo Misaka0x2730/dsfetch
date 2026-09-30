@@ -1,0 +1,27 @@
+# Weekly update PRs for the pinned versions: Go modules, GitHub Actions, the
+# build image (docker/Dockerfile) and the test servers (dev/docker-compose.yml).
+# Not covered: GO_VERSION, DLV_VERSION and 7-Zip in docker/Dockerfile.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directories: ["/", "/third_party/gabagool"]
+    schedule:
+      interval: weekly
+    groups:
+      go-modules:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker-compose
+    directory: /dev
+    schedule:
+      interval: weekly

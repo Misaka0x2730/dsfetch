@@ -1,0 +1,208 @@
+version: '3'
+
+# Console connection for deploy/logs/debug/recon: put CONSOLE=<ip> (and
+# optionally CONSOLE_USER, PORTS_DIR, APPS_DIR) into .env or pass on the command line:
+#   task deploy CONSOLE=192.168.1.50
+dotenv: ['.env']
+
+vars:
+  CONSOLE: '{{.CONSOLE | default ""}}'
+  CONSOLE_USER: '{{.CONSOLE_USER | default "root"}}'
+  # The stock menu lists Ports from both cards; TF2 (/mnt/sdcard) is the big one.
+  PORTS_DIR: '{{.PORTS_DIR | default "/mnt/sdcard/Ports"}}'
+  APP_DIR: '{{.PORTS_DIR}}/DSFetch'
+  # Applications list entry (launcher + icon); it starts the copy in Ports.
+  APPS_DIR: '{{.APPS_DIR | default "/mnt/sdcard/Roms/APPS"}}'
+  SSH_TARGET: '{{.CONSOLE_USER}}@{{.CONSOLE}}'
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  GIT_COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo unknown
+  # macOS: Xcode.app and the Command Line Tools can disagree on the SDK
+  # (older ld + newer .tbd files -> "unknown architecture arm64e.x1").
+  # Pin cgo to the self-consistent CLT toolchain when it is installed.
+  GO_ENV:
+    sh: |
+      if [ "$(uname)" = Darwin ] && [ -z "${DEVELOPER_DIR:-}" ] && [ -x /Library/Developer/CommandLineTools/usr/bin/clang ]; then
+        echo "DEVELOPER_DIR=/Library/Developer/CommandLineTools"
+      fi
+  DOCKER_BUILD: docker buildx build --platform linux/arm64 -f docker/Dockerfile --target export
+  DOCKER_ARGS: --build-arg VERSION={{.VERSION}} --build-arg GIT_COMMIT={{.GIT_COMMIT}}
+
+tasks:
+  default:
+    cmds: [task --list]
+    silent: true
+
+  devroot:
+    desc: Create the fake SD card tree used by `task run`
+    cmds:
+      - mkdir -p devroot/mnt/mmc/Roms/NDS devroot/mnt/mmc/Roms/GBA devroot/mnt/mmc/Roms/PSP devroot/mnt/mmc/Roms/SFC devroot/mnt/mmc/Ports
+      - mkdir -p devroot/mnt/sdcard/Roms/NDS devroot/mnt/sdcard/Roms/PS
+    status:
+      - test -d devroot/mnt/mmc/Roms
+
+  run:
+    desc: Run on the Mac in a 1024x768 window (keyboard or any SDL gamepad)
+    deps: [devroot]
+    cmds:
+      - '{{.GO_ENV}} go run ./cmd/dsfetch -dev -root ./devroot {{.CLI_ARGS}}'
+
+  build:
+    desc: Build for the host (macOS)
+    cmds:
+      - '{{.GO_ENV}} go build -o build/dsfetch ./cmd/dsfetch'
+
+  test:
+    desc: Unit tests (FTP/SFTP use in-process servers), including the gabagool fork
+    cmds:
+      - '{{.GO_ENV}} go test ./... github.com/BrandonKowalski/gabagool/v2/... {{.CLI_ARGS}}'
+
+  test:integration:
+    desc: FTP/FTPS (vsftpd) and SMB (Samba) tests against dev/docker-compose.yml
+    cmds:
+      - mkdir -p dev/share
+      - ./dev/ftps-cert.sh
+      - docker compose -f dev/docker-compose.yml up -d --wait ftp ftps samba
+      - '{{.GO_ENV}} go test -tags integration -count=1 ./internal/remote/... {{.CLI_ARGS}}'
+
+  licenses:
+    desc: Collect the license texts of all linked Go modules into build/licenses
+    cmds:
+      - rm -rf build/licenses
+      - ./scripts/collect-licenses.sh build/licenses
+
+  fixtures:
+    desc: Regenerate 7z test archives in testdata/archives (needs 7zz)
+    cmds:
+      - ./scripts/make-fixtures.sh
+
+  fixtures:rar:
+    desc: Regenerate RAR test archives (RARLAB rar in a Docker container)
+    cmds:
+      - ./scripts/make-rar-fixtures.sh
+
+  lint:
+    cmds:
+      - '{{.GO_ENV}} go vet ./...'
+
+  dev:servers:
+    desc: Start FTP, FTPS, SFTP and Samba test servers (arm64 images)
+    cmds:
+      - mkdir -p dev/share
+      - ./dev/ftps-cert.sh
+      - docker compose -f dev/docker-compose.yml up -d
+
+  dev:ftp:
+    desc: Quick FTP server on :2121 (user test / test) serving dev/share
+    cmds:
+      - mkdir -p dev/share
+      - pipx run pyftpdlib -p 2121 -u test -P test -d ./dev/share -w
+
+  build:arm64:
+    desc: Build the console binary in Docker (native arm64 on Apple Silicon)
+    cmds:
+      - rm -rf build/arm64
+      - '{{.DOCKER_BUILD}} {{.DOCKER_ARGS}} --output type=local,dest=build/arm64 .'
+      - 'echo "build image: $(cat build/arm64/BUILD_GLIBC)"; echo "binary needs: $(cat build/arm64/REQUIRED_GLIBC)"'
+
+  build:arm64:debug:
+    desc: Console build without optimisations, plus dlv
+    cmds:
+      - rm -rf build/arm64-debug
+      - '{{.DOCKER_BUILD}} {{.DOCKER_ARGS}} --build-arg DEBUG=1 --output type=local,dest=build/arm64-debug .'
+
+  package:
+    desc: Assemble dist/DSFetch-rgdsplus-<version>.zip (unzip into the root of TF1 or TF2)
+    deps: [build:arm64]
+    vars:
+      STAGE: dist/rgdsplus
+    cmds:
+      - rm -rf {{.STAGE}} dist/DSFetch-rgdsplus*.zip dist/7z*-src.tar.xz
+      - mkdir -p {{.STAGE}}/Ports/DSFetch/lib {{.STAGE}}/Ports/DSFetch/data
+      - cp platforms/rgdsplus/DSFetch.sh {{.STAGE}}/Ports/
+      - cp build/arm64/dsfetch {{.STAGE}}/Ports/DSFetch/
+      # The device survey kit (DSFetch-Recon in the Ports menu, sdlprobe) is
+      # for bringing DSFetch to another device or firmware without SSH, so
+      # only with RECON=1: its report holds the Wi-Fi name and addresses, and
+      # it may start the firmware's SSH server.
+      - '{{if eq (.RECON | default "0") "1"}}mkdir -p {{.STAGE}}/Ports/DSFetch/tools && cp platforms/rgdsplus/DSFetch-Recon.sh {{.STAGE}}/Ports/ && cp scripts/device-recon.sh {{.STAGE}}/Ports/DSFetch/tools/ && cp build/arm64/sdlprobe {{.STAGE}}/Ports/DSFetch/ && chmod +x {{.STAGE}}/Ports/DSFetch/sdlprobe {{.STAGE}}/Ports/DSFetch/tools/*.sh{{end}}'
+      - mkdir -p {{.STAGE}}/Ports/DSFetch/licenses
+      - ./scripts/collect-licenses.sh {{.STAGE}}/Ports/DSFetch/licenses
+      - cp licenses/* {{.STAGE}}/Ports/DSFetch/licenses/
+      # The stock firmware ships SDL2, SDL2_image, SDL2_ttf and SDL2_gfx; bundle
+      # them only for firmwares that lack them (BUNDLE_LIBS=1: SDL2_gfx,
+      # EXTRA_LIBS=1: SDL2_image/SDL2_ttf and their dependencies too).
+      - '{{if or (eq (.BUNDLE_LIBS | default "0") "1") (eq (.EXTRA_LIBS | default "0") "1")}}cp -R build/arm64/lib/. {{.STAGE}}/Ports/DSFetch/lib/ && cp build/arm64/licenses-lib/* {{.STAGE}}/Ports/DSFetch/licenses/{{end}}'
+      - '{{if eq (.EXTRA_LIBS | default "0") "1"}}cp -R build/arm64/lib-extra/. {{.STAGE}}/Ports/DSFetch/lib/{{end}}'
+      - '{{if eq (.EXTRA_LIBS | default "0") "1"}}cp build/arm64/licenses-lib-extra/* {{.STAGE}}/Ports/DSFetch/licenses/{{end}}'
+      - cp LICENSE THIRD_PARTY.md {{.STAGE}}/Ports/DSFetch/
+      # README with its pictures; the icon joins them in docs/images.
+      - mkdir -p {{.STAGE}}/Ports/DSFetch/docs/images
+      - cp docs/images/* platforms/rgdsplus/DSFetch.png {{.STAGE}}/Ports/DSFetch/docs/images/
+      - sed 's#"platforms/rgdsplus/DSFetch.png"#"docs/images/DSFetch.png"#' README.md > {{.STAGE}}/Ports/DSFetch/README.md
+      - grep -q '"docs/images/DSFetch.png"' {{.STAGE}}/Ports/DSFetch/README.md
+      # 7zz is LGPL: its source goes next to the zip (and into the release).
+      - '{{if ne (.NO_7ZZ | default "0") "1"}}cp build/arm64/7zz/7zz {{.STAGE}}/Ports/DSFetch/ && cp build/arm64/7zz/7-Zip-License.txt build/arm64/7zz/7-Zip-SOURCE.txt {{.STAGE}}/Ports/DSFetch/licenses/ && cp build/arm64/7zz/7z*-src.tar.xz dist/{{end}}'
+      - cp platforms/rgdsplus/launcher.env.example {{.STAGE}}/Ports/DSFetch/data/
+      - chmod +x {{.STAGE}}/Ports/*.sh {{.STAGE}}/Ports/DSFetch/dsfetch
+      - '[ ! -f {{.STAGE}}/Ports/DSFetch/7zz ] || chmod +x {{.STAGE}}/Ports/DSFetch/7zz'
+      # Both the Ports and the Applications menu show Imgs/<launcher name>.png.
+      - mkdir -p {{.STAGE}}/Ports/Imgs {{.STAGE}}/Roms/APPS/Imgs
+      - cp platforms/rgdsplus/DSFetch.png {{.STAGE}}/Ports/Imgs/
+      - cp platforms/rgdsplus/apps/DSFetch.sh {{.STAGE}}/Roms/APPS/
+      - cp platforms/rgdsplus/DSFetch.png {{.STAGE}}/Roms/APPS/Imgs/
+      - chmod +x {{.STAGE}}/Roms/APPS/DSFetch.sh
+      # The name carries the version About shows (tag, or commit hash).
+      - cd {{.STAGE}} && zip -qr ../DSFetch-rgdsplus-{{.VERSION}}.zip Ports Roms
+      - echo "dist/DSFetch-rgdsplus-{{.VERSION}}.zip"
+
+  _require-console:
+    internal: true
+    preconditions:
+      - sh: '[ -n "{{.CONSOLE}}" ]'
+        msg: 'Set CONSOLE=<console ip> (in .env or on the command line)'
+
+  deploy:
+    desc: Copy the app to the console over SSH (keeps data/ except the example)
+    deps: [package]
+    cmds:
+      - task: _require-console
+      # No rsync or sftp-server on the stock firmware: stream a tar over ssh.
+      - >-
+        COPYFILE_DISABLE=1 tar --no-xattrs -C dist/rgdsplus/Ports -cf - . |
+        ssh {{.SSH_TARGET}} 'mkdir -p {{.PORTS_DIR}} && tar -C {{.PORTS_DIR}} -xf - && sync'
+      - >-
+        COPYFILE_DISABLE=1 tar --no-xattrs -C dist/rgdsplus/Roms/APPS -cf - . |
+        ssh {{.SSH_TARGET}} 'mkdir -p {{.APPS_DIR}} && tar -C {{.APPS_DIR}} -xf - && sync'
+
+  logs:
+    desc: Follow the app log on the console
+    cmds:
+      - task: _require-console
+      - ssh {{.SSH_TARGET}} 'tail -n 100 -F {{.APP_DIR}}/data/dsfetch.log {{.APP_DIR}}/data/launcher.log'
+
+  recon:
+    desc: Stage 0 - run the device survey on the console, save docs/device-report.txt
+    cmds:
+      - task: _require-console
+      - ssh {{.SSH_TARGET}} 'sh -s' < scripts/device-recon.sh > docs/device-report.txt 2>&1 || true
+      - echo "saved docs/device-report.txt"
+
+  debug:
+    desc: Deploy a debug build and start dlv on the console (attach from VS Code)
+    deps: [build:arm64:debug]
+    cmds:
+      - task: _require-console
+      - >-
+        COPYFILE_DISABLE=1 tar --no-xattrs -C build/arm64-debug -cf - dsfetch dlv |
+        ssh {{.SSH_TARGET}} 'tar -C {{.APP_DIR}} -xf -'
+      - ssh {{.SSH_TARGET}} 'pkill -f "dlv exec" || true'
+      - >-
+        ssh -t {{.SSH_TARGET}} 'cd {{.APP_DIR}} && export LD_LIBRARY_PATH={{.APP_DIR}}/lib:$LD_LIBRARY_PATH &&
+        [ -f data/launcher.env ] && . data/launcher.env;
+        ./dlv exec --headless --listen=:2345 --api-version=2 --accept-multiclient ./dsfetch'
+
+  clean:
+    cmds:
+      - rm -rf build dist

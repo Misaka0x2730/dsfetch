@@ -1,0 +1,11 @@
+.git
+build
+dist
+devroot
+devdata
+dev/share
+*.log
+.env
+.vscode
+.idea
+anbernic

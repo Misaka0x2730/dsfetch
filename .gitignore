@@ -1,0 +1,34 @@
+# build outputs
+/build/
+/dist/
+*.log
+
+# local dev data (servers.json, keys, logs) and fake SD cards
+/devdata/
+/devroot/
+/dev/share/
+/dev/tls/
+
+# console connection settings for task deploy/logs/debug
+.env
+
+# editors / OS
+.DS_Store
+.idea/
+*.swp
+
+# go test artifacts
+*.test
+*.out
+coverage.*
+
+# local notes on the devices (stock firmware findings) and plans, kept out of git
+/docs/devices/
+/docs/plans/
+
+# raw device surveys: contain the Wi-Fi SSID, MAC and IP addresses
+/docs/recon/
+/docs/device-report.txt
+
+# local copy of the third-party stock OS mod from the console's TF1 (reference only)
+/anbernic/

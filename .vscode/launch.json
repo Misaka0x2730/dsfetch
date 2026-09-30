@@ -1,0 +1,30 @@
+{
+  "version": "0.2.0",
+  "inputs": [
+    { "id": "consoleIp", "type": "promptString", "description": "Console IP address" }
+  ],
+  "configurations": [
+    {
+      "name": "DSFetch on Mac",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/dsfetch",
+      "cwd": "${workspaceFolder}",
+      "args": ["-dev", "-root", "./devroot"],
+      "env": { "DEVELOPER_DIR": "/Library/Developer/CommandLineTools" }
+    },
+    {
+      "name": "Attach to console (task debug)",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "host": "${input:consoleIp}",
+      "port": 2345,
+      "substitutePath": [
+        { "from": "${workspaceFolder}", "to": "/src" },
+        { "from": "${env:HOME}/go/pkg/mod", "to": "/root/go/pkg/mod" }
+      ]
+    }
+  ]
+}
