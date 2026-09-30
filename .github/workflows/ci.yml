@@ -32,7 +32,9 @@ env:
 jobs:
   test:
     name: Lint and unit tests
-    runs-on: ubuntu-latest
+    # A fixed release, not ubuntu-latest: the SDL2 packages below are
+    # installed by name, and a new Ubuntu may rename or replace them.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -88,7 +90,7 @@ jobs:
 
   integration:
     name: Integration tests (vsftpd with and without TLS, Samba)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -129,7 +131,7 @@ jobs:
     name: Package (linux/arm64)
     # Native arm64 runners are free for public repositories. Without them
     # (private repository), set the repository variable
-    # PACKAGE_RUNNER=ubuntu-latest: the build then runs under QEMU, much slower.
+    # PACKAGE_RUNNER=ubuntu-24.04: the build then runs under QEMU, much slower.
     runs-on: ${{ vars.PACKAGE_RUNNER || 'ubuntu-24.04-arm' }}
     timeout-minutes: 60
     outputs:
@@ -192,7 +194,7 @@ jobs:
     name: GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [test, integration, package]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write

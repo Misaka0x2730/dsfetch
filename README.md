@@ -171,7 +171,7 @@ a GitHub release with the zip and the source of its 7-Zip (LGPL); tags like
 `v1.1.0-rc1` become pre-releases.
 *Settings → About* shows the version from `git describe`.  
 In a private repository without arm64 runners, set the variable
-`PACKAGE_RUNNER=ubuntu-latest` (slower, under QEMU).
+`PACKAGE_RUNNER=ubuntu-24.04` (slower, under QEMU).
 
 ## License
 
