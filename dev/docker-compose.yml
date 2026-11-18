@@ -17,7 +17,7 @@ name: dsfetch-dev
 
 services:
   ftp:
-    image: delfer/alpine-ftp-server:latest@sha256:60bb774d8408d9d4d5c74d05d1c086a34ce192c6c1a142ffac268cac0dbc6fac
+    image: delfer/alpine-ftp-server:latest@sha256:b27013e7436cea343826ba7edb77aa3a8b2d22df14e366b82d10a3b0b5ecc880
     environment:
       USERS: "test|test|/ftp/test"
       MIN_PORT: "21000"
@@ -36,7 +36,7 @@ services:
   # The same vsftpd with explicit TLS. Like vsftpd's defaults it requires
   # the data connections to resume the control connection's TLS session.
   ftps:
-    image: delfer/alpine-ftp-server:latest@sha256:60bb774d8408d9d4d5c74d05d1c086a34ce192c6c1a142ffac268cac0dbc6fac
+    image: delfer/alpine-ftp-server:latest@sha256:b27013e7436cea343826ba7edb77aa3a8b2d22df14e366b82d10a3b0b5ecc880
     environment:
       USERS: "test|test|/ftp/test"
       MIN_PORT: "21011"
